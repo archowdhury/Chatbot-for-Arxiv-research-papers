@@ -1,14 +1,17 @@
 import os
 from dotenv import load_dotenv
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader, PyPDFDirectoryLoader
+from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain.prompts import PromptTemplate
 from langchain.chains.question_answering import load_qa_chain
-from langchain_community.chat_models import ChatOpenAI
+from langchain.chains import RetrievalQA
+from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain.docstore.document import Document
+from pypdf import PdfReader
 
 import chromadb
 
@@ -18,54 +21,46 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 import streamlit as st
 
-
-
+# Load the API keys from the .env file
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
+def process_documents(doc_path):
 
-# Load the PDF files to the vector store
-# --------------------------------------
-
-def load_documents(doc_path=None):
-
-    # Read all the documents from the specified path
-    #-----------------------------------------------
+    # Read all the documents from the specified path and chunk them
+    #--------------------------------------------------------------
 
     documents = []
 
+    splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=100)
+
     for idx, file in enumerate(os.listdir(doc_path)):
         
-        if idx > 70:
-            break
+        # if idx > 2:
+        #     break
 
         try:
             
             pdf_path = os.path.join(doc_path, file)
             loader = PyPDFLoader(pdf_path)
-            pages = loader.load()
-
-            documents.extend(pages)
+            data = loader.load_and_split(text_splitter=splitter)
+            documents.extend(data)
             
-            print(f"Loading PDF {idx + 1}: Pages : {len(pages)}   {file} - SUCCESSFUL")
+            print(f"Loading PDF {idx + 1}: Pages : {len(data)}   {file} - SUCCESSFUL")
         except:
             print(f"Loading PDF : {file} - FAILED")
-    
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    chunked_documents = text_splitter.split_documents(documents)
 
 
-    # Load the documents to the vector store
-    #---------------------------------------
+    # Generate the embeddings
+    #------------------------
 
-    client = chromadb.Client()
-    
+    print("\nGenerating embeddings and storing to the vector database.....\n")
+
     embeddings = OpenAIEmbeddings()
     # embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
     vectordb = Chroma.from_documents(
-        documents=chunked_documents,
+        documents=documents,
         embedding=embeddings,
         persist_directory='arxiv_vector_store.db'
     )
@@ -73,67 +68,104 @@ def load_documents(doc_path=None):
     return vectordb
 
 
-# Create the agent chain
-#-----------------------
-
-def create_chat_agent():
+def create_chat_agent(persist_directory=None):
     
-    model_name = 'gpt-3.5-turbo'
-    model = ChatOpenAI(model_name=model_name)
+    chat_llm = ChatOpenAI()
+    embeddings = OpenAIEmbeddings()
+    
+    db = Chroma(
+        persist_directory=persist_directory,
+        embedding_function=embeddings
+    )
 
-    chain = load_qa_chain(model, chain_type='stuff')
+
+    retriever = db.as_retriever(
+        search_type="similarity_score_threshold", 
+        search_kwargs={
+            "k": 5,
+            "score_threshold": 0.5
+            }
+        )
+
+    chain = RetrievalQA.from_chain_type(
+        llm=chat_llm,
+        retriever=retriever,
+        chain_type="stuff",
+        return_source_documents=True
+    )
     
     return chain
 
+   
 
-def create_googlet_agent():
+
+if __name__ == '__main__':
     
-    model_name = 'gemini-pro'
-    model = ChatOpenAI(model_name=model_name)
+    if os.path.exists('arxiv_vector_store.db'):
+        pass
+    else:
+        print("Loading the PDF files to the vector store")
+        vectordb = process_documents(doc_path='llm_papers')
 
-    chain = load_qa_chain(model, chain_type='stuff')
+    # Create the search agent
+    search_agent = create_chat_agent(persist_directory="arxiv_vector_store.db")
+
+    no_match = ["don't", "do not"]
     
-    return chain
-
-
-
-# Get the answer to the query
-#----------------------------
-def get_answer(query, vectordb, chain):
+    # query = "What is CEO of Infosys"
     
-    matching_docs = vectordb.similarity_search(query)
-    answer = chain.run(input_documents=matching_docs, question=query)
+    # answer = search_agent.invoke(query)
     
-    return answer
-
-
-# Load all the documents
-
-vectordb = load_documents(doc_path='llm_papers')
-
-# if os.path.exists('arxiv_vector_store.db'):
-#     print("PDF documents already loaded")
-# else:
-#     print("Loading the PDF files to the vector store")
-#     vectordb = load_documents(doc_path='llm_papers')
-
-
+    # print(f"\nQuestion : {answer['query']} \nAnswer : {answer['result']}\n") 
     
+    # if any([m in answer['result'][:15] for m in no_match]):
+    #     pass
+    # else:
+    #     relevant_sources = []
+    #     for source in answer['source_documents']:
+    #         ref = source.metadata['source']
+    #         ref = ref.split('\\')[1]
+    #         relevant_sources.append(ref)
+    #     relevant_sources = list(set(relevant_sources))
+    
+    #     print("You can refer to these Arxiv papers for more information :")
+    #     for r in relevant_sources:
+    #         print(r)   
 
 
-# # Create the Streamlit chat app
-# #------------------------------
 
-# st.set_page_config(page_title="Arxiv research paper searcher")
-# st.header("Query Arxiv papers")
+    #----------------
+    # Streamlit app
+    #----------------
 
-# # Load the documents and initialize the chat agent
-# vectordb = load_documents(doc_path='llm_papers')
-# chain = create_chat_agent()
+    app_name = "Arxiv Research Papers - Search Page"
+    st.set_page_config(page_title=app_name)
 
-# query = st.text_input('Enter search query :')
+    st.header(app_name)
 
-# if query:
-#     answer = get_answer(query, vectordb, chain)
-#     st.write(answer)
+    query = st.text_input("Enter your search query :", key="query")
+
+    # If the user has entered some URL
+    if query:
+            
+        with st.spinner('Getting the results...'):
+            answer = search_agent.invoke(query)
+        
+        st.subheader("The answer is :") 
+        st.write(answer['result']) 
+
+        if any([m in answer['result'][:15] for m in no_match]):        
+            pass
+        else:
+            reference_sources = []
+            for source in answer['source_documents']:
+                ref = source.metadata['source']
+                ref = ref.split('\\')[1]
+                reference_sources.append(ref)
+            reference_sources = list(set(reference_sources))
+            
+            st.subheader("You can refer to these Arxiv papers for more information")
+            for r in reference_sources:
+                st.write(r)
+                     
     
