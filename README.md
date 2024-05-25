@@ -9,10 +9,10 @@ Streamlit has ben used to create the UI.
 ### Project Setup
 1) Clone the repository
 2) Create a virtual environment
-3) If using VSCode
-4) 		You can use Ctrl + Shift + P to create the environment. Specify the requirements.txt file and it will also install all the required packages
-   		You can also use the command line to create the environment. Type python3 -m venv evn_name. Activate the environment. Then run pip install -r requirements.txt to install all the required packages
-   		You can use either conda or a native virtual environment. I used the native environment.
+3) Copy the "llm_papers" with all the Arxiv PDF files into the project folder (if not already there)
+4) If using VSCode you can use Ctrl + Shift + P to create the environment. Specify the requirements.txt file and it will also install all the required packages
+5) You can also use the command line to create the environment. Type python3 -m venv evn_name. Activate the environment. Then run pip install -r requirements.txt to install all the required packages
+6) You can use either conda or a native virtual environment. I used the native environment.
 
 ### Running the code
 1) Open the terminal
