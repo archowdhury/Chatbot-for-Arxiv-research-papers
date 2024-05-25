@@ -7,7 +7,3 @@ tiktoken
 streamlit
 python-dotenv
 pypdf
-google.generativeai
-langchain-google-genai
-beautifulsoup4
-lxml
